@@ -88,10 +88,10 @@ graph TB
 | ↳ 子工具 | `embed_images.py` | Base64 嵌入图片 |
 | ↳ 子工具 | `flatten_tspan.py` | 文本扁平化 |
 | ↳ 子工具 | `svg_rect_to_path.py` | 圆角矩形转 Path |
-| **导出** | `svg_to_pptx.py` | SVG 转 PowerPoint |
+| **导出** | `svg_to_pptx.py`, `svg_to_pptx_wps.py` | SVG 转 PowerPoint / WPS 可编辑导出 |
 | **讲稿处理** | `total_md_split.py` | 讲稿拆分工具 |
 | **质量检查** | `svg_quality_checker.py`, `batch_validate.py` | 验证 SVG 规范 |
-| **素材生成** | `nano_banana_gen.py` | 利用 Gemini Nano 生成高品质图片 |
+| **素材生成** | `nano_banana_gen.py`, `gemini_web_image_pipeline.py` | Gemini API / Gemini Web 批量图片生成 |
 | **辅助** | `config.py`, `analyze_images.py`, `rotate_images.py` | 配置和图片处理 |
 
 ---
@@ -636,6 +636,51 @@ pip install python-pptx
 - 文件体积比 PNG 方案小很多
 - 切换效果默认关闭，需要用户显式启用
 - 演讲备注默认开启，使用 `--no-notes` 禁用
+
+---
+
+### 8.5. svg_to_pptx_wps.py — WPS 可编辑 PPTX 导出工具
+
+将 SVG 页面拆解为 PowerPoint 原生对象，优先解决 WPS Office 中“整页是一个对象、无法打散编辑”的问题。
+
+**适用场景**:
+
+- 仅安装了 WPS Office，没有 PowerPoint 的“转换为形状”能力
+- 需要在 WPS 中直接修改文字、底框、线条和图片位置
+- 希望导出结果尽量保持模板结构，同时获得更高的可编辑性
+
+**功能**:
+
+- 将常见 SVG 元素映射为 PPT 原生对象
+- 支持文本、矩形、圆角矩形、直线、圆形、折线、图片
+- 保留项目中的演讲备注
+- 为中文文本显式写入 East Asian 字体槽位，减少 WPS 自动替换字体
+
+**用法**:
+
+```bash
+# 导出 WPS 可编辑版（推荐使用后处理后的版本）
+python3 tools/svg_to_pptx_wps.py <项目路径> -s final
+
+# 指定输出文件
+python3 tools/svg_to_pptx_wps.py <项目路径> -s final -o output_wps_editable.pptx
+
+# 禁用演讲备注
+python3 tools/svg_to_pptx_wps.py <项目路径> -s final --no-notes
+```
+
+**与 `svg_to_pptx.py` 的区别**:
+
+| 工具 | 侧重点 | 适合场景 |
+|------|--------|----------|
+| `svg_to_pptx.py` | 高保真保留 SVG | PowerPoint 展示、矢量保真优先 |
+| `svg_to_pptx_wps.py` | 原生对象可编辑 | WPS 二次编辑、改字改框改图优先 |
+
+**注意**:
+
+- 当前更适合本项目常用的基础元素，不追求完整覆盖所有 SVG 特性
+- 复杂渐变、滤镜、特殊路径效果会优先退化为更稳的可编辑表达
+- 若中文字体需要稳定一致，建议使用系统已安装且 WPS 可识别的字体
 
 ---
 
@@ -1235,6 +1280,59 @@ export GEMINI_BASE_URL="YOUR_API_BASE_URL"
 ```bash
 pip install google-genai
 ```
+
+---
+
+### 14.5. gemini_web_image_pipeline.py — Gemini Web 批量生图流水线
+
+基于 Gemini 网页版的自动化图片流水线，适合在已有 `image_prompts.md` 的前提下批量完成“提交提示词 -> 等待生成 -> 自动下载 -> 去水印 -> 归档”。
+
+**适用场景**:
+
+- 已有项目级提示词文件 `images/image_prompts.md`
+- 需要批量生成较多图片，手工逐张下载过于繁琐
+- 希望继续沿用 Gemini Web，而不是 API 直连方式
+
+**功能**:
+
+- 从 `image_prompts.md` 解析指定图片条目
+- 调用 Gemini Web 自动提交提示词并等待出图
+- 自动点击下载并缓存原图
+- 串联 `gemini_watermark_remover.py` 清洗图片
+- 按项目目标文件名将最终图片保存到 `images/`
+
+**典型流程**:
+
+```bash
+# 按项目提示词文件处理指定图片
+python3 tools/gemini_web_image_pipeline.py \
+  --prompts projects/demo/images/image_prompts.md \
+  --project projects/demo \
+  --image-id cover_hero
+
+# 批量处理多个图片 ID
+python3 tools/gemini_web_image_pipeline.py \
+  --prompts projects/demo/images/image_prompts.md \
+  --project projects/demo \
+  --image-id cover_hero --image-id thesis_scene --image-id tech_scene
+```
+
+**前置条件**:
+
+- 已安装并可用 Playwright
+- 已在浏览器中登录 Gemini
+- 页面结构未发生较大改版
+
+**输出约定**:
+
+- 原始下载图保存到 `images/raw_downloads/`
+- 去水印后的最终图保存到 `images/`
+- 建议与 `images/image_prompts.md` 配套使用，统一管理图片 ID、提示词和目标文件名
+
+**注意**:
+
+- 若遇到登录失效、验证码或页面结构变更，可能需要人工介入
+- 该工具更适合项目生产流水线，不替代 `nano_banana_gen.py` 的 API 生成方案
 
 ---
 
